@@ -132,7 +132,6 @@ fn main() -> Result<()> {
     let fd_control = get_fd_control_test();
     let kill = get_kill_test();
 
-
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
     tm.add_test_group(Box::new(huge_tlb));
