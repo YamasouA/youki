@@ -34,6 +34,7 @@ use crate::tests::seccomp::get_seccomp_test;
 use crate::tests::seccomp_notify::get_seccomp_notify_test;
 use crate::tests::sysctl::get_sysctl_test;
 use crate::tests::tlb::get_tlb_test;
+use crate::tests::kill::get_kill_test;
 use crate::utils::support::{set_runtime_path, set_runtimetest_path};
 
 #[derive(Parser, Debug)]
@@ -129,6 +130,7 @@ fn main() -> Result<()> {
     let no_pivot = get_no_pivot_test();
     let process_oom_score_adj = get_process_oom_score_adj_test();
     let fd_control = get_fd_control_test();
+    let kill = get_kill_test();
 
     tm.add_test_group(Box::new(cl));
     tm.add_test_group(Box::new(cc));
@@ -160,6 +162,7 @@ fn main() -> Result<()> {
     tm.add_test_group(Box::new(no_pivot));
     tm.add_test_group(Box::new(process_oom_score_adj));
     tm.add_test_group(Box::new(fd_control));
+    tm.add_test_group(Box::new(kill));
 
     tm.add_test_group(Box::new(io_priority_test));
     tm.add_cleanup(Box::new(cgroups::cleanup_v1));
