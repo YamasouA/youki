@@ -2013,7 +2013,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "tempfile",
- "thiserror 2.0.11",
+ "thiserror 2.0.6",
  "tracing",
 ]
 
@@ -2044,7 +2044,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "tempfile",
- "thiserror 2.0.11",
+ "thiserror 2.0.6",
  "tracing",
 ]
 
@@ -2472,7 +2472,7 @@ dependencies = [
  "serde_json",
  "strum",
  "strum_macros",
- "thiserror 2.0.11",
+ "thiserror 2.0.6",
 ]
 
 [[package]]
@@ -4030,11 +4030,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.11"
+version = "2.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d452f284b73e6d76dd36758a0c8684b1d5be31f92b89d07fd5822175732206fc"
+checksum = "8fec2a1820ebd077e2b90c4df007bebf344cd394098a13c563957d0afc83ea47"
 dependencies = [
- "thiserror-impl 2.0.11",
+ "thiserror-impl 2.0.6",
 ]
 
 [[package]]
@@ -4050,9 +4050,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.11"
+version = "2.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26afc1baea8a989337eeb52b6e72a039780ce45c3edfcc9c5b9d112feeb173c2"
+checksum = "d65750cab40f4ff1929fb1ba509e9914eb756131cef4210da8d5d700d26f6312"
 dependencies = [
  "proc-macro2",
  "quote",
