@@ -39,10 +39,6 @@ impl ContainerLifecycle {
         self.container_id = id.to_string();
     }
 
-    pub fn get_id(&self) -> &str {
-        &self.container_id
-    }
-
     pub fn create(&self) -> TestResult {
         create::create(self.project_path.path(), &self.container_id).into()
     }
