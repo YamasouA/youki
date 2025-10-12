@@ -207,6 +207,35 @@ impl InitContainerBuilder {
             }
         }
 
+        if let Some(mounts) = spec.mounts() {
+            for mount in mounts {
+                let has_idmap_flag = mount.options().map_or(false, |opts| {
+                    opts.iter().any(|opt| {
+                        matches!(opt.as_str(), "idmap" | "ridmap")
+                    })
+                });
+
+                let has_mappings = mount
+                    .uid_mappings()
+                    .map_or(false, |maps| !maps.is_empty())
+                    || mount
+                        .gid_mappings()
+                        .map_or(false, |maps| !maps.is_empty());
+
+                if has_idmap_flag && !has_mappings {
+                    tracing::error!(destination = ?mount.destination(),
+                        "idmap option requires uidMappings/gidMappings to be specified");
+                    Err(ErrInvalidSpec::MountIdmapMappingsMissing)?;
+                }
+
+                if has_mappings && !has_idmap_flag {
+                    tracing::error!(destination = ?mount.destination(),
+                        "uidMappings/gidMappings specified without idmap option");
+                    Err(ErrInvalidSpec::MountIdmapFlagMissing)?;
+                }
+            }
+        }
+
         utils::validate_spec_for_new_user_ns(spec)?;
 
         Ok(())

@@ -98,6 +98,10 @@ pub enum ErrInvalidSpec {
     IoPriority,
     #[error("invalid scheduler config for process")]
     Scheduler,
+    #[error("mount requested idmap but uid/gid mappings are missing")]
+    MountIdmapMappingsMissing,
+    #[error("mount specifies uid/gid mappings without idmap option")]
+    MountIdmapFlagMissing,
 }
 
 #[derive(Debug, thiserror::Error)]
