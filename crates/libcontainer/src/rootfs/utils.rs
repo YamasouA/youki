@@ -8,6 +8,9 @@ use oci_spec::runtime::{LinuxDevice, LinuxDeviceBuilder, LinuxDeviceType, Mount}
 use super::mount::MountError;
 use crate::syscall::linux::{self, MountOption, MountRecursive};
 
+const IDMAP_FLAG: &str = "idmap";
+const RIDMAP_FLAG: &str = "ridmap";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountOptionConfig {
     /// Mount Flags.
@@ -18,6 +21,12 @@ pub struct MountOptionConfig {
 
     /// RecAttr represents mount properties to be applied recursively.
     pub rec_attr: Option<linux::MountAttr>,
+
+    /// Indicates whether ID-mapped mount semantics are requested.
+    pub apply_idmap: bool,
+
+    /// Indicates whether ID-mapped mount should be applied recursively.
+    pub apply_recursive_idmap: bool,
 }
 
 pub fn default_devices() -> Vec<LinuxDevice> {
@@ -86,9 +95,24 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
     let mut flags = MsFlags::empty();
     let mut data = Vec::new();
     let mut mount_attr: Option<linux::MountAttr> = None;
+    let mut apply_idmap = false;
+    let mut apply_recursive_idmap = false;
 
     if let Some(options) = &m.options() {
         for option in options {
+            match option.as_str() {
+                IDMAP_FLAG => {
+                    apply_idmap = true;
+                    continue;
+                }
+                RIDMAP_FLAG => {
+                    apply_idmap = true;
+                    apply_recursive_idmap = true;
+                    continue;
+                }
+                _ => {}
+            }
+
             if let Ok(mount_attr_option) = linux::MountRecursive::from_str(option.as_str()) {
                 // Some options aren't corresponding to the mount flags.
                 // These options need `AT_RECURSIVE` options.
@@ -167,12 +191,7 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
                     MountOption::Strictatime(is_clear, flag) => Some((is_clear, flag)),
                     MountOption::Nostrictatime(is_clear, flag) => Some((is_clear, flag)),
                 },
-                Err(unknown) => {
-                    if unknown == "idmap" || unknown == "ridmap" {
-                        return Err(MountError::UnsupportedMountOption(unknown));
-                    }
-                    None
-                }
+                Err(_) => None,
             } {
                 if is_clear {
                     flags &= !flag;
@@ -189,6 +208,8 @@ pub fn parse_mount(m: &Mount) -> std::result::Result<MountOptionConfig, MountErr
         flags,
         data: data.join(","),
         rec_attr: mount_attr,
+        apply_idmap,
+        apply_recursive_idmap,
     })
 }
 
@@ -226,6 +247,8 @@ mod tests {
                 flags: MsFlags::empty(),
                 data: "".to_string(),
                 rec_attr: None,
+                apply_idmap: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -248,6 +271,8 @@ mod tests {
                 flags: MsFlags::MS_NOSUID | MsFlags::MS_STRICTATIME,
                 data: "mode=755,size=65536k".to_string(),
                 rec_attr: None,
+                apply_idmap: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -272,7 +297,9 @@ mod tests {
             MountOptionConfig {
                 flags: MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
                 data: "newinstance,ptmxmode=0666,mode=0620,gid=5".to_string(),
-                rec_attr: None
+                rec_attr: None,
+                apply_idmap: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -295,7 +322,9 @@ mod tests {
             MountOptionConfig {
                 flags: MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
                 data: "mode=1777,size=65536k".to_string(),
-                rec_attr: None
+                rec_attr: None,
+                apply_idmap: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -317,7 +346,9 @@ mod tests {
             MountOptionConfig {
                 flags: MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
                 data: "".to_string(),
-                rec_attr: None
+                rec_attr: None,
+                apply_idmap: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -343,6 +374,8 @@ mod tests {
                     | MsFlags::MS_RDONLY,
                 data: "".to_string(),
                 rec_attr: None,
+                apply_idmap: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -369,7 +402,9 @@ mod tests {
                     | MsFlags::MS_RDONLY
                     | MsFlags::MS_RELATIME,
                 data: "".to_string(),
-                rec_attr: None
+                rec_attr: None,
+                apply_idmap: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config,
         );
@@ -427,6 +462,8 @@ mod tests {
                     | MsFlags::MS_UNBINDABLE,
                 data: "".to_string(),
                 rec_attr: None,
+                apply_idmap: false,
+                apply_recursive_idmap: false,
             },
             mount_option_config
         );
@@ -460,7 +497,47 @@ mod tests {
             MountOptionConfig {
                 flags: MsFlags::empty(),
                 data: "".to_string(),
-                rec_attr: Some(MountAttr::all())
+                rec_attr: Some(MountAttr::all()),
+                apply_idmap: false,
+                apply_recursive_idmap: false,
+            },
+            mount_option_config
+        );
+
+        let mount_option_config = parse_mount(
+            &MountBuilder::default()
+                .destination(PathBuf::from("/data"))
+                .typ("bind")
+                .source(PathBuf::from("/src"))
+                .options(vec!["idmap".to_string()])
+                .build()?,
+        )?;
+        assert_eq!(
+            MountOptionConfig {
+                flags: MsFlags::empty(),
+                data: "".to_string(),
+                rec_attr: None,
+                apply_idmap: true,
+                apply_recursive_idmap: false,
+            },
+            mount_option_config
+        );
+
+        let mount_option_config = parse_mount(
+            &MountBuilder::default()
+                .destination(PathBuf::from("/data-rec"))
+                .typ("bind")
+                .source(PathBuf::from("/src-rec"))
+                .options(vec!["ridmap".to_string()])
+                .build()?,
+        )?;
+        assert_eq!(
+            MountOptionConfig {
+                flags: MsFlags::empty(),
+                data: "".to_string(),
+                rec_attr: None,
+                apply_idmap: false,
+                apply_recursive_idmap: true,
             },
             mount_option_config
         );
