@@ -11,6 +11,8 @@ pub enum Message {
     MappingWritten,
     SeccompNotify,
     SeccompNotifyDone,
+    MountFdPlease(MountMsg),
+    MountFdReply,
     ExecFailed(String),
     OtherError(String),
 }
@@ -24,8 +26,20 @@ impl fmt::Display for Message {
             Message::MappingWritten => write!(f, "MappingWritten"),
             Message::SeccompNotify => write!(f, "SeccompNotify"),
             Message::SeccompNotifyDone => write!(f, "SeccompNotifyDone"),
+            Message::MountFdPlease(_) => write!(f, "MountFdPlease"),
+            Message::MountFdReply => write!(f, "MountFdReply"),
             Message::ExecFailed(s) => write!(f, "ExecFailed({})", s),
             Message::OtherError(s) => write!(f, "OtherError({})", s),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MountMsg {
+    pub source: String,
+    pub destination: String,
+    pub flags: u64,
+    pub cleared_flags: u64,
+    pub is_bind: bool,
+    pub idmap: Option<MountIdMap>,
 }
