@@ -1,7 +1,7 @@
 //! Implements Command trait for Linux systems
 use std::any::Any;
 use std::ffi::{CStr, CString, OsStr};
-use std::os::fd::BorrowedFd;
+use std::os::fd::{BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::symlink;
 use std::os::unix::io::RawFd;
@@ -27,12 +27,17 @@ use crate::{capabilities, utils};
 // Flags used in mount_setattr(2).
 // see https://man7.org/linux/man-pages/man2/mount_setattr.2.html.
 pub const AT_RECURSIVE: u32 = 0x00008000; // Change the mount properties of the entire mount tree.
+pub const AT_EMPTY_PATH: u32 = libc::AT_EMPTY_PATH as u32;
+pub const OPEN_TREE_CLONE: u32 = libc::OPEN_TREE_CLONE as u32;
+pub const OPEN_TREE_CLOEXEC: u32 = libc::OPEN_TREE_CLOEXEC as u32;
+pub const MOVE_MOUNT_F_EMPTY_PATH: u32 = libc::MOVE_MOUNT_F_EMPTY_PATH as u32;
 #[allow(non_upper_case_globals)]
 pub const MOUNT_ATTR__ATIME: u64 = 0x00000070; // Setting on how atime should be updated.
 const MOUNT_ATTR_RDONLY: u64 = 0x00000001;
 const MOUNT_ATTR_NOSUID: u64 = 0x00000002;
 const MOUNT_ATTR_NODEV: u64 = 0x00000004;
 const MOUNT_ATTR_NOEXEC: u64 = 0x00000008;
+pub const MOUNT_ATTR_IDMAP: u64 = libc::MOUNT_ATTR_IDMAP as u64;
 const MOUNT_ATTR_RELATIME: u64 = 0x00000000;
 const MOUNT_ATTR_NOATIME: u64 = 0x00000010;
 const MOUNT_ATTR_STRICTATIME: u64 = 0x00000020;
@@ -596,6 +601,84 @@ impl Syscall for LinuxSyscall {
         data: Option<&str>,
     ) -> Result<()> {
         mount(source, target, fstype, flags, data)?;
+        Ok(())
+    }
+
+    fn open_tree(&self, dirfd: RawFd, pathname: &Path, flags: u32) -> Result<OwnedFd> {
+        let path_c_string = pathname
+            .to_path_buf()
+            .to_str()
+            .map(CString::new)
+            .ok_or_else(|| {
+                tracing::error!(path = ?pathname, "failed to convert path to string");
+                nix::Error::EINVAL
+            })?
+            .map_err(|err| {
+                tracing::error!(path = ?pathname, ?err, "failed to convert path to string");
+                nix::Error::EINVAL
+            })?;
+
+        let fd = match unsafe {
+            libc::syscall(libc::SYS_open_tree, dirfd, path_c_string.as_ptr(), flags)
+        } {
+            fd if fd >= 0 => fd as RawFd,
+            -1 => return Err(nix::Error::last().into()),
+            _ => return Err(nix::Error::UnknownErrno.into()),
+        };
+
+        // SAFETY: fd is a valid file descriptor returned by the kernel.
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+
+    fn move_mount(
+        &self,
+        from_dirfd: RawFd,
+        from_pathname: &Path,
+        to_dirfd: RawFd,
+        to_pathname: &Path,
+        flags: u32,
+    ) -> Result<()> {
+        let from_c_string = from_pathname
+            .to_path_buf()
+            .to_str()
+            .map(CString::new)
+            .ok_or_else(|| {
+                tracing::error!(path = ?from_pathname, "failed to convert path to string");
+                nix::Error::EINVAL
+            })?
+            .map_err(|err| {
+                tracing::error!(path = ?from_pathname, ?err, "failed to convert path to string");
+                nix::Error::EINVAL
+            })?;
+
+        let to_c_string = to_pathname
+            .to_path_buf()
+            .to_str()
+            .map(CString::new)
+            .ok_or_else(|| {
+                tracing::error!(path = ?to_pathname, "failed to convert path to string");
+                nix::Error::EINVAL
+            })?
+            .map_err(|err| {
+                tracing::error!(path = ?to_pathname, ?err, "failed to convert path to string");
+                nix::Error::EINVAL
+            })?;
+
+        match unsafe {
+            libc::syscall(
+                libc::SYS_move_mount,
+                from_dirfd,
+                from_c_string.as_ptr(),
+                to_dirfd,
+                to_c_string.as_ptr(),
+                flags,
+            )
+        } {
+            0 => Ok(()),
+            -1 => Err(nix::Error::last().into()),
+            _ => Err(nix::Error::UnknownErrno.into()),
+        }?;
+
         Ok(())
     }
 

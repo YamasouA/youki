@@ -3,6 +3,7 @@
 //! implementation details
 use std::any::Any;
 use std::ffi::OsStr;
+use std::os::fd::OwnedFd;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -40,6 +41,15 @@ pub trait Syscall {
         fstype: Option<&str>,
         flags: MsFlags,
         data: Option<&str>,
+    ) -> Result<()>;
+    fn open_tree(&self, dirfd: i32, pathname: &Path, flags: u32) -> Result<OwnedFd>;
+    fn move_mount(
+        &self,
+        from_dirfd: i32,
+        from_pathname: &Path,
+        to_dirfd: i32,
+        to_pathname: &Path,
+        flags: u32,
     ) -> Result<()>;
     fn symlink(&self, original: &Path, link: &Path) -> Result<()>;
     fn mknod(&self, path: &Path, kind: SFlag, perm: Mode, dev: u64) -> Result<()>;

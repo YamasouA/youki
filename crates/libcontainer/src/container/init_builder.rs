@@ -209,29 +209,15 @@ impl InitContainerBuilder {
 
         if let Some(mounts) = spec.mounts() {
             for mount in mounts {
-                let has_idmap_flag = mount.options().map_or(false, |opts| {
-                    opts.iter().any(|opt| {
-                        matches!(opt.as_str(), "idmap" | "ridmap")
-                    })
-                });
+                let uid_mappings = mount.uid_mappings().filter(|maps| !maps.is_empty());
+                let gid_mappings = mount.gid_mappings().filter(|maps| !maps.is_empty());
 
-                let has_mappings = mount
-                    .uid_mappings()
-                    .map_or(false, |maps| !maps.is_empty())
-                    || mount
-                        .gid_mappings()
-                        .map_or(false, |maps| !maps.is_empty());
-
-                if has_idmap_flag && !has_mappings {
-                    tracing::error!(destination = ?mount.destination(),
-                        "idmap option requires uidMappings/gidMappings to be specified");
+                if uid_mappings.is_some() != gid_mappings.is_some() {
+                    tracing::error!(
+                        destination = ?mount.destination(),
+                        "uidMappings/gidMappings must be specified together"
+                    );
                     Err(ErrInvalidSpec::MountIdmapMappingsMissing)?;
-                }
-
-                if has_mappings && !has_idmap_flag {
-                    tracing::error!(destination = ?mount.destination(),
-                        "uidMappings/gidMappings specified without idmap option");
-                    Err(ErrInvalidSpec::MountIdmapFlagMissing)?;
                 }
             }
         }
@@ -251,5 +237,95 @@ impl InitContainerBuilder {
         )?;
         container.save()?;
         Ok(container)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use anyhow::Result;
+    use oci_spec::runtime::{LinuxIdMappingBuilder, MountBuilder, SpecBuilder};
+
+    use super::InitContainerBuilder;
+    use crate::error::{ErrInvalidSpec, LibcontainerError};
+
+    fn build_mount(
+        uid_mappings: Option<Vec<oci_spec::runtime::LinuxIdMapping>>,
+        gid_mappings: Option<Vec<oci_spec::runtime::LinuxIdMapping>>,
+    ) -> Result<oci_spec::runtime::Mount> {
+        let mut builder = MountBuilder::default()
+            .destination(PathBuf::from("/data"))
+            .typ("bind")
+            .source(PathBuf::from("/source"));
+        if let Some(uid_mappings) = uid_mappings {
+            builder = builder.uid_mappings(uid_mappings);
+        }
+        if let Some(gid_mappings) = gid_mappings {
+            builder = builder.gid_mappings(gid_mappings);
+        }
+        Ok(builder.build()?)
+    }
+
+    fn sample_id_mapping() -> Result<oci_spec::runtime::LinuxIdMapping> {
+        Ok(LinuxIdMappingBuilder::default()
+            .container_id(0u32)
+            .host_id(1000u32)
+            .size(1u32)
+            .build()?)
+    }
+
+    #[test]
+    fn validate_mount_idmap_requires_both_mappings() -> Result<()> {
+        let uid_mapping = sample_id_mapping()?;
+        let gid_mapping = sample_id_mapping()?;
+
+        let uid_only = build_mount(Some(vec![uid_mapping.clone()]), None)?;
+        let spec = SpecBuilder::default()
+            .version("1.0.2")
+            .mounts(vec![uid_only])
+            .build()?;
+        assert!(matches!(
+            InitContainerBuilder::validate_spec(&spec),
+            Err(LibcontainerError::InvalidSpec(
+                ErrInvalidSpec::MountIdmapMappingsMissing
+            ))
+        ));
+
+        let gid_only = build_mount(None, Some(vec![gid_mapping]))?;
+        let spec = SpecBuilder::default()
+            .version("1.0.2")
+            .mounts(vec![gid_only])
+            .build()?;
+        assert!(matches!(
+            InitContainerBuilder::validate_spec(&spec),
+            Err(LibcontainerError::InvalidSpec(
+                ErrInvalidSpec::MountIdmapMappingsMissing
+            ))
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn validate_mount_idmap_allows_both_or_empty() -> Result<()> {
+        let uid_mapping = sample_id_mapping()?;
+        let gid_mapping = sample_id_mapping()?;
+
+        let both = build_mount(Some(vec![uid_mapping]), Some(vec![gid_mapping]))?;
+        let spec = SpecBuilder::default()
+            .version("1.0.2")
+            .mounts(vec![both])
+            .build()?;
+        assert!(InitContainerBuilder::validate_spec(&spec).is_ok());
+
+        let empty = build_mount(Some(vec![]), Some(vec![]))?;
+        let spec = SpecBuilder::default()
+            .version("1.0.2")
+            .mounts(vec![empty])
+            .build()?;
+        assert!(InitContainerBuilder::validate_spec(&spec).is_ok());
+
+        Ok(())
     }
 }

@@ -3,6 +3,7 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::os::fd::OwnedFd;
 use std::sync::Arc;
 
 use caps::{CapSet, CapsHashSet};
@@ -22,6 +23,31 @@ pub struct MountArgs {
     pub fstype: Option<String>,
     pub flags: MsFlags,
     pub data: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct OpenTreeArgs {
+    pub dirfd: i32,
+    pub pathname: PathBuf,
+    pub flags: u32,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MoveMountArgs {
+    pub from_dirfd: i32,
+    pub from_pathname: PathBuf,
+    pub to_dirfd: i32,
+    pub to_pathname: PathBuf,
+    pub flags: u32,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MountSetattrArgs {
+    pub dirfd: i32,
+    pub pathname: PathBuf,
+    pub flags: u32,
+    pub mount_attr: linux::MountAttr,
+    pub size: libc::size_t,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -63,6 +89,9 @@ pub enum ArgName {
     Namespace,
     Unshare,
     Mount,
+    OpenTree,
+    MoveMount,
+    MountSetattr,
     Symlink,
     Mknod,
     Chown,
@@ -80,6 +109,9 @@ impl ArgName {
             ArgName::Namespace,
             ArgName::Unshare,
             ArgName::Mount,
+            ArgName::OpenTree,
+            ArgName::MoveMount,
+            ArgName::MountSetattr,
             ArgName::Symlink,
             ArgName::Mknod,
             ArgName::Chown,
@@ -236,6 +268,40 @@ impl Syscall for TestHelperSyscall {
         )
     }
 
+    fn open_tree(&self, dirfd: i32, pathname: &Path, flags: u32) -> Result<OwnedFd> {
+        self.mocks.act(
+            ArgName::OpenTree,
+            Box::new(OpenTreeArgs {
+                dirfd,
+                pathname: pathname.to_owned(),
+                flags,
+            }),
+        )?;
+
+        let file = std::fs::File::open("/dev/null")?;
+        Ok(file.into())
+    }
+
+    fn move_mount(
+        &self,
+        from_dirfd: i32,
+        from_pathname: &Path,
+        to_dirfd: i32,
+        to_pathname: &Path,
+        flags: u32,
+    ) -> Result<()> {
+        self.mocks.act(
+            ArgName::MoveMount,
+            Box::new(MoveMountArgs {
+                from_dirfd,
+                from_pathname: from_pathname.to_owned(),
+                to_dirfd,
+                to_pathname: to_pathname.to_owned(),
+                flags,
+            }),
+        )
+    }
+
     fn symlink(&self, original: &Path, link: &Path) -> Result<()> {
         self.mocks.act(
             ArgName::Symlink,
@@ -275,13 +341,22 @@ impl Syscall for TestHelperSyscall {
 
     fn mount_setattr(
         &self,
-        _: i32,
-        _: &Path,
-        _: u32,
-        _: &linux::MountAttr,
-        _: libc::size_t,
+        dirfd: i32,
+        pathname: &Path,
+        flags: u32,
+        mount_attr: &linux::MountAttr,
+        size: libc::size_t,
     ) -> Result<()> {
-        todo!()
+        self.mocks.act(
+            ArgName::MountSetattr,
+            Box::new(MountSetattrArgs {
+                dirfd,
+                pathname: pathname.to_owned(),
+                flags,
+                mount_attr: mount_attr.clone(),
+                size,
+            }),
+        )
     }
 
     fn set_io_priority(&self, class: i64, priority: i64) -> Result<()> {
@@ -357,6 +432,33 @@ impl TestHelperSyscall {
             .iter()
             .map(|x| x.downcast_ref::<(CapSet, CapsHashSet)>().unwrap().clone())
             .collect::<Vec<(CapSet, CapsHashSet)>>()
+    }
+
+    pub fn get_open_tree_args(&self) -> Vec<OpenTreeArgs> {
+        self.mocks
+            .fetch(ArgName::OpenTree)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<OpenTreeArgs>().unwrap().clone())
+            .collect::<Vec<OpenTreeArgs>>()
+    }
+
+    pub fn get_move_mount_args(&self) -> Vec<MoveMountArgs> {
+        self.mocks
+            .fetch(ArgName::MoveMount)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<MoveMountArgs>().unwrap().clone())
+            .collect::<Vec<MoveMountArgs>>()
+    }
+
+    pub fn get_mount_setattr_args(&self) -> Vec<MountSetattrArgs> {
+        self.mocks
+            .fetch(ArgName::MountSetattr)
+            .values
+            .iter()
+            .map(|x| x.downcast_ref::<MountSetattrArgs>().unwrap().clone())
+            .collect::<Vec<MountSetattrArgs>>()
     }
 
     pub fn get_mount_args(&self) -> Vec<MountArgs> {
