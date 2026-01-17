@@ -1,5 +1,7 @@
 # Changelog
 
+## [v0.0.1](https://github.com/YamasouA/youki/commits/v0.0.1) - 2026-01-17
+
 ## [v0.5.7](https://github.com/youki-dev/youki/compare/v0.5.6...v0.5.7) - 2025-11-05
 ### 💪 Improvements
 - Drop cgroup v1 in github workflows by @utam0k in https://github.com/youki-dev/youki/pull/3284
