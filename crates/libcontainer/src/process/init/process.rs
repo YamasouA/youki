@@ -21,7 +21,7 @@ use crate::error::MissingSpecError;
 use crate::namespaces::Namespaces;
 use crate::process::args::{ContainerArgs, ContainerType};
 use crate::process::channel;
-use crate::rootfs::RootFS;
+use crate::rootfs::{MountChannels, RootFS};
 #[cfg(feature = "libseccomp")]
 use crate::seccomp;
 use crate::syscall::{Syscall, SyscallError};
@@ -87,17 +87,23 @@ pub fn container_init_process(
         let in_user_ns = utils::is_in_new_userns().map_err(InitProcessError::Io)?;
         let bind_service = ctx.ns.get(LinuxNamespaceType::User)?.is_some() || in_user_ns;
         let rootfs = RootFS::new();
+        let mut mount_comm = MountChannels {
+            main: main_sender,
+            init: init_receiver,
+        };
         rootfs
             .prepare_rootfs(
                 ctx.spec,
                 ctx.rootfs,
                 bind_service,
                 ctx.ns.get(LinuxNamespaceType::Cgroup)?.is_some(),
+                Some(&mut mount_comm),
             )
             .map_err(|err| {
                 tracing::error!(?err, "failed to prepare rootfs");
                 InitProcessError::RootFS(err)
             })?;
+        drop(mount_comm);
 
         // Entering into the rootfs jail. If mount namespace is specified, then
         // we use pivot_root, but if we are on the host mount namespace, we will

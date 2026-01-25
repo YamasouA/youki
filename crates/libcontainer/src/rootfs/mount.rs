@@ -1,6 +1,5 @@
 use std::fs::{OpenOptions, canonicalize, create_dir_all};
 use std::io::ErrorKind;
-use std::os::fd::OwnedFd;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -17,14 +16,8 @@ use nix::dir::Dir;
 use nix::errno::Errno;
 use nix::fcntl::OFlag;
 use nix::mount::MsFlags;
-#[cfg(not(test))]
-use nix::sched::{CloneFlags, unshare};
 use nix::sys::stat::Mode;
 use nix::sys::statfs::{PROC_SUPER_MAGIC, statfs};
-#[cfg(not(test))]
-use nix::sys::wait::waitpid;
-#[cfg(not(test))]
-use nix::unistd::{ForkResult, fork, pipe, read as nix_read, write as nix_write};
 use oci_spec::runtime::{LinuxIdMapping, Mount as SpecMount, MountBuilder as SpecMountBuilder};
 use procfs::process::{MountInfo, MountOptFields, Process};
 use safe_path;
@@ -33,6 +26,8 @@ use safe_path;
 use super::symlink::Symlink;
 use super::symlink::SymlinkError;
 use super::utils::{MountOptionConfig, parse_mount};
+use crate::process::channel;
+use crate::process::message::{MountIdMap, MountMsg};
 use crate::syscall::syscall::create_syscall;
 use crate::syscall::{Syscall, SyscallError, linux};
 use crate::utils::{PathBufExt, retry};
@@ -80,46 +75,13 @@ pub struct MountOptions<'a> {
     pub cgroup_ns: bool,
 }
 
-trait UsernsProvider {
-    fn create_userns_fd(
-        &self,
-        uid_mappings: &[LinuxIdMapping],
-        gid_mappings: &[LinuxIdMapping],
-    ) -> Result<OwnedFd>;
-}
-
-#[cfg(not(test))]
-struct RealUsernsProvider;
-
-#[cfg(not(test))]
-impl UsernsProvider for RealUsernsProvider {
-    fn create_userns_fd(
-        &self,
-        uid_mappings: &[LinuxIdMapping],
-        gid_mappings: &[LinuxIdMapping],
-    ) -> Result<OwnedFd> {
-        create_userns_fd(uid_mappings, gid_mappings)
-    }
-}
-
-#[cfg(test)]
-struct TestUsernsProvider;
-
-#[cfg(test)]
-impl UsernsProvider for TestUsernsProvider {
-    fn create_userns_fd(
-        &self,
-        _uid_mappings: &[LinuxIdMapping],
-        _gid_mappings: &[LinuxIdMapping],
-    ) -> Result<OwnedFd> {
-        let file = std::fs::File::open("/dev/null")?;
-        Ok(file.into())
-    }
+pub struct MountChannels<'a> {
+    pub main: &'a mut channel::MainSender,
+    pub init: &'a mut channel::InitReceiver,
 }
 
 pub struct Mount {
     syscall: Box<dyn Syscall>,
-    userns_provider: Box<dyn UsernsProvider>,
 }
 
 impl Default for Mount {
@@ -156,107 +118,10 @@ fn map_idmapped_syscall_error(err: SyscallError) -> MountError {
     }
 }
 
-#[cfg(test)]
-fn default_userns_provider() -> Box<dyn UsernsProvider> {
-    Box::new(TestUsernsProvider)
-}
-
-#[cfg(not(test))]
-fn default_userns_provider() -> Box<dyn UsernsProvider> {
-    Box::new(RealUsernsProvider)
-}
-
-fn write_id_mapping(path: &Path, mappings: &[LinuxIdMapping]) -> Result<()> {
-    if mappings.is_empty() {
-        return Err(MountError::Custom(
-            "idmapped mounts require non-empty uid/gid mappings".to_string(),
-        ));
-    }
-
-    let mut content = String::new();
-    for (idx, mapping) in mappings.iter().enumerate() {
-        if idx > 0 {
-            content.push('\n');
-        }
-        content.push_str(&format!(
-            "{} {} {}",
-            mapping.container_id(),
-            mapping.host_id(),
-            mapping.size()
-        ));
-    }
-    content.push('\n');
-
-    std::fs::write(path, content)?;
-    Ok(())
-}
-
-#[cfg(not(test))]
-fn create_userns_fd(
-    uid_mappings: &[LinuxIdMapping],
-    gid_mappings: &[LinuxIdMapping],
-) -> Result<OwnedFd> {
-    let (ready_read, ready_write) = pipe()?;
-    let (done_read, done_write) = pipe()?;
-
-    match unsafe { fork()? } {
-        ForkResult::Child => {
-            let _ = nix::unistd::close(ready_read);
-            let _ = nix::unistd::close(done_write);
-
-            if unshare(CloneFlags::CLONE_NEWUSER).is_err() {
-                let _ = nix::unistd::close(ready_write);
-                let _ = nix::unistd::close(done_read);
-                unsafe { libc::_exit(1) };
-            }
-
-            let _ = nix_write(ready_write, &[0u8]);
-            let _ = nix::unistd::close(ready_write);
-
-            let mut buf = [0u8; 1];
-            let _ = nix_read(done_read, &mut buf);
-            let _ = nix::unistd::close(done_read);
-            unsafe { libc::_exit(0) };
-        }
-        ForkResult::Parent { child } => {
-            nix::unistd::close(ready_write)?;
-            nix::unistd::close(done_read)?;
-
-            let result = (|| -> Result<OwnedFd> {
-                let mut buf = [0u8; 1];
-                nix_read(ready_read, &mut buf)?;
-
-                let setgroups_path = PathBuf::from(format!("/proc/{child}/setgroups"));
-                if let Err(err) = std::fs::write(&setgroups_path, "deny") {
-                    if err.kind() != ErrorKind::NotFound {
-                        return Err(err.into());
-                    }
-                }
-
-                let uid_map_path = PathBuf::from(format!("/proc/{child}/uid_map"));
-                write_id_mapping(&uid_map_path, uid_mappings)?;
-                let gid_map_path = PathBuf::from(format!("/proc/{child}/gid_map"));
-                write_id_mapping(&gid_map_path, gid_mappings)?;
-
-                let userns_path = PathBuf::from(format!("/proc/{child}/ns/user"));
-                let userns_file = std::fs::File::open(&userns_path)?;
-                Ok(userns_file.into())
-            })();
-
-            let _ = nix::unistd::close(ready_read);
-            let _ = nix::unistd::close(done_write);
-            let _ = waitpid(child, None);
-
-            result
-        }
-    }
-}
-
 impl Mount {
     pub fn new() -> Mount {
         Mount {
             syscall: create_syscall(),
-            userns_provider: default_userns_provider(),
         }
     }
 
@@ -298,6 +163,7 @@ impl Mount {
         mount_option_config: &MountOptionConfig,
         uid_mappings: &[LinuxIdMapping],
         gid_mappings: &[LinuxIdMapping],
+        comm: &mut MountChannels<'_>,
     ) -> Result<()> {
         let dest_for_host = safe_path::scoped_join(rootfs, mount.destination()).map_err(|err| {
             tracing::error!(
@@ -312,39 +178,28 @@ impl Mount {
         let source = mount.source().as_ref().ok_or(MountError::NoSource)?;
         let src = self.prepare_bind_source(source, dest)?;
 
-        let recursive = mount_option_config.flags.contains(MsFlags::MS_REC);
-        let userns_fd = self
-            .userns_provider
-            .create_userns_fd(uid_mappings, gid_mappings)?;
-
-        let mut open_flags = linux::OPEN_TREE_CLONE | linux::OPEN_TREE_CLOEXEC;
-        if recursive {
-            open_flags |= linux::AT_RECURSIVE;
-        }
-        let mount_fd = self
-            .syscall
-            .open_tree(libc::AT_FDCWD, &src, open_flags)
-            .map_err(map_idmapped_syscall_error)?;
-
-        let mount_attr = linux::MountAttr {
-            attr_set: linux::MOUNT_ATTR_IDMAP,
-            attr_clr: 0,
-            propagation: 0,
-            userns_fd: userns_fd.as_raw_fd() as u64,
+        let recursive = mount_option_config.apply_recursive_idmap
+            || mount_option_config.flags.contains(MsFlags::MS_REC);
+        let msg = MountMsg {
+            source: src.to_string_lossy().to_string(),
+            destination: dest.to_string_lossy().to_string(),
+            flags: mount_option_config.flags.bits() as u64,
+            cleared_flags: 0,
+            is_bind: true,
+            idmap: Some(MountIdMap {
+                uid_mappings: uid_mappings.to_vec(),
+                gid_mappings: gid_mappings.to_vec(),
+                recursive,
+            }),
         };
-        let mut setattr_flags = linux::AT_EMPTY_PATH;
-        if recursive {
-            setattr_flags |= linux::AT_RECURSIVE;
-        }
-        self.syscall
-            .mount_setattr(
-                mount_fd.as_raw_fd(),
-                Path::new(""),
-                setattr_flags,
-                &mount_attr,
-                mem::size_of::<linux::MountAttr>(),
-            )
-            .map_err(map_idmapped_syscall_error)?;
+        comm.main.request_mount_fd(msg).map_err(|err| {
+            tracing::error!("failed to request mount fd: {}", err);
+            MountError::Other(err.into())
+        })?;
+        let mount_fd = comm.init.wait_for_mount_fd_reply().map_err(|err| {
+            tracing::error!("failed to receive mount fd: {}", err);
+            MountError::Other(err.into())
+        })?;
 
         self.syscall
             .move_mount(
@@ -393,7 +248,12 @@ impl Mount {
         Ok(())
     }
 
-    pub fn setup_mount(&self, mount: &SpecMount, options: &MountOptions) -> Result<()> {
+    pub fn setup_mount(
+        &self,
+        mount: &SpecMount,
+        options: &MountOptions,
+        mut comm: Option<&mut MountChannels<'_>>,
+    ) -> Result<()> {
         tracing::debug!("mounting {:?}", mount);
         let mut mount_option_config = parse_mount(mount)?;
         let typ = mount.typ().as_deref();
@@ -420,10 +280,11 @@ impl Mount {
                             "libcontainer can't run in a Legacy or Hybrid cgroup setup without the v1 feature"
                         );
                         #[cfg(feature = "v1")]
-                        self.mount_cgroup_v1(mount, options).map_err(|err| {
-                            tracing::error!("failed to mount cgroup v1: {}", err);
-                            err
-                        })?
+                        self.mount_cgroup_v1(mount, options, comm.as_deref_mut())
+                            .map_err(|err| {
+                                tracing::error!("failed to mount cgroup v1: {}", err);
+                                err
+                            })?
                     }
                     Unified => {
                         #[cfg(not(feature = "v2"))]
@@ -431,11 +292,16 @@ impl Mount {
                             "libcontainer can't run in a Unified cgroup setup without the v2 feature"
                         );
                         #[cfg(feature = "v2")]
-                        self.mount_cgroup_v2(mount, options, &mount_option_config)
-                            .map_err(|err| {
-                                tracing::error!("failed to mount cgroup v2: {}", err);
-                                err
-                            })?
+                        self.mount_cgroup_v2(
+                            mount,
+                            options,
+                            &mount_option_config,
+                            comm.as_deref_mut(),
+                        )
+                        .map_err(|err| {
+                            tracing::error!("failed to mount cgroup v2: {}", err);
+                            err
+                        })?
                     }
                 }
             }
@@ -481,12 +347,18 @@ impl Mount {
             }
             _ => {
                 if wants_idmap && bind_mount {
+                    let comm = comm.as_deref_mut().ok_or_else(|| {
+                        MountError::Custom(
+                            "idmapped mounts require mount channels".to_string(),
+                        )
+                    })?;
                     self.mount_idmapped(
                         mount,
                         options.root,
                         &mount_option_config,
                         uid_mappings.expect("uid mappings should be present"),
                         gid_mappings.expect("gid mappings should be present"),
+                        comm,
                     )
                     .map_err(|err| {
                         tracing::error!("failed to create idmapped mount {:?}: {}", mount, err);
@@ -526,7 +398,12 @@ impl Mount {
     }
 
     #[cfg(feature = "v1")]
-    fn mount_cgroup_v1(&self, cgroup_mount: &SpecMount, options: &MountOptions) -> Result<()> {
+    fn mount_cgroup_v1(
+        &self,
+        cgroup_mount: &SpecMount,
+        options: &MountOptions,
+        mut comm: Option<&mut MountChannels<'_>>,
+    ) -> Result<()> {
         tracing::debug!("mounting cgroup v1 filesystem");
         // create tmpfs into which the cgroup subsystems will be mounted
         let tmpfs = SpecMountBuilder::default()
@@ -545,10 +422,11 @@ impl Mount {
                 err
             })?;
 
-        self.setup_mount(&tmpfs, options).map_err(|err| {
-            tracing::error!("failed to mount tmpfs for cgroup: {}", err);
-            err
-        })?;
+        self.setup_mount(&tmpfs, options, comm.as_deref_mut())
+            .map_err(|err| {
+                tracing::error!("failed to mount tmpfs for cgroup: {}", err);
+                err
+            })?;
 
         // get all cgroup mounts on the host system
         let host_mounts: Vec<PathBuf> = libcgroups::v1::util::list_subsystem_mount_points()
@@ -620,6 +498,7 @@ impl Mount {
                         subsystem_name == "systemd",
                         host_mount,
                         &process_cgroups,
+                        comm.as_deref_mut(),
                     )?;
                 }
 
@@ -695,6 +574,7 @@ impl Mount {
         named: bool,
         host_mount: &Path,
         process_cgroups: &HashMap<String, String>,
+        mut comm: Option<&mut MountChannels<'_>>,
     ) -> Result<()> {
         tracing::debug!("Mounting (emulated) {:?} cgroup subsystem", subsystem_name);
         let named_hierarchy: Cow<str> = if named {
@@ -738,10 +618,11 @@ impl Mount {
                 .build()?;
             tracing::debug!("Mounting emulated cgroup subsystem: {:?}", emulated);
 
-            self.setup_mount(&emulated, options).map_err(|err| {
-                tracing::error!("failed to mount {subsystem_name} cgroup hierarchy: {}", err);
-                err
-            })?;
+            self.setup_mount(&emulated, options, comm.as_deref_mut())
+                .map_err(|err| {
+                    tracing::error!("failed to mount {subsystem_name} cgroup hierarchy: {}", err);
+                    err
+                })?;
         } else {
             tracing::warn!("Could not mount {:?} cgroup subsystem", subsystem_name);
         }
@@ -755,6 +636,7 @@ impl Mount {
         cgroup_mount: &SpecMount,
         options: &MountOptions,
         mount_option_config: &MountOptionConfig,
+        _comm: Option<&mut MountChannels<'_>>,
     ) -> Result<()> {
         tracing::debug!("Mounting cgroup v2 filesystem");
 
@@ -1138,6 +1020,7 @@ mod tests {
     use oci_spec::runtime::LinuxIdMappingBuilder;
 
     use super::*;
+    use crate::process::channel;
     use crate::syscall::test::{ArgName, MountArgs, TestHelperSyscall};
 
     #[test]
@@ -1370,7 +1253,26 @@ mod tests {
             cgroup_ns: false,
         };
         let mounter = Mount::new();
-        mounter.setup_mount(&mount, &options)?;
+        let (mut main_sender, mut main_receiver) = channel::main_channel()?;
+        let (mut init_sender, mut init_receiver) = channel::init_channel()?;
+        let handler = std::thread::spawn(move || {
+            let req = main_receiver.wait_for_mount_fd_request().unwrap();
+            assert!(req.idmap.is_some());
+            let idmap = req.idmap.unwrap();
+            assert!(idmap.recursive);
+            assert_eq!(idmap.uid_mappings.len(), 1);
+            assert_eq!(idmap.gid_mappings.len(), 1);
+
+            let fd = std::fs::File::open("/dev/null").unwrap();
+            init_sender.send_mount_fd_reply(fd.into()).unwrap();
+        });
+        let mut mount_comm = MountChannels {
+            main: &mut main_sender,
+            init: &mut init_receiver,
+        };
+        mounter.setup_mount(&mount, &options, Some(&mut mount_comm))?;
+        drop(mount_comm);
+        handler.join().unwrap();
 
         let syscall = mounter
             .syscall
@@ -1378,14 +1280,9 @@ mod tests {
             .downcast_ref::<TestHelperSyscall>()
             .unwrap();
 
-        assert_eq!(syscall.get_open_tree_args().len(), 1);
         assert_eq!(syscall.get_move_mount_args().len(), 1);
-        let mount_setattr_args = syscall.get_mount_setattr_args();
-        assert_eq!(mount_setattr_args.len(), 1);
-        assert_ne!(
-            mount_setattr_args[0].mount_attr.attr_set & linux::MOUNT_ATTR_IDMAP,
-            0
-        );
+        assert_eq!(syscall.get_open_tree_args().len(), 0);
+        assert_eq!(syscall.get_mount_setattr_args().len(), 0);
         assert!(syscall.get_mount_args().is_empty());
 
         Ok(())
@@ -1511,6 +1408,7 @@ mod tests {
                 false,
                 &host_cgroup_mount.join(subsystem_name),
                 &process_cgroups,
+                None,
             )
             .context("failed to setup emulated subsystem")?;
 
@@ -1563,7 +1461,7 @@ mod tests {
 
         // act
         mounter
-            .mount_cgroup_v1(&spec_cgroup_mount, &mount_opts)
+            .mount_cgroup_v1(&spec_cgroup_mount, &mount_opts, None)
             .context("failed to mount cgroup v1")?;
 
         // assert
@@ -1642,7 +1540,7 @@ mod tests {
             rec_attr: None,
         };
         mounter
-            .mount_cgroup_v2(&spec_cgroup_mount, &mount_opts, &mount_option_config)
+            .mount_cgroup_v2(&spec_cgroup_mount, &mount_opts, &mount_option_config, None)
             .context("failed to mount cgroup v2")?;
 
         // assert
@@ -1783,7 +1681,7 @@ mod tests {
 
         let m = Mount::new();
 
-        let res = m.setup_mount(&mount, &options);
+        let res = m.setup_mount(&mount, &options, None);
 
         // proc destination symlink should be rejected
         assert!(res.is_err());
@@ -1818,7 +1716,7 @@ mod tests {
 
         let m = Mount::new();
 
-        let res = m.setup_mount(&mount, &options);
+        let res = m.setup_mount(&mount, &options, None);
 
         // sys destination symlink should be rejected
         assert!(res.is_err());

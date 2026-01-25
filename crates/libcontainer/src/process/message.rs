@@ -1,6 +1,7 @@
 use core::fmt;
 
 use serde::{Deserialize, Serialize};
+use oci_spec::runtime::LinuxIdMapping;
 
 /// Used as a wrapper for messages to be sent between child and parent processes
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -13,6 +14,7 @@ pub enum Message {
     SeccompNotifyDone,
     MountFdPlease(MountMsg),
     MountFdReply,
+    MountFdError(String),
     ExecFailed(String),
     OtherError(String),
 }
@@ -28,6 +30,7 @@ impl fmt::Display for Message {
             Message::SeccompNotifyDone => write!(f, "SeccompNotifyDone"),
             Message::MountFdPlease(_) => write!(f, "MountFdPlease"),
             Message::MountFdReply => write!(f, "MountFdReply"),
+            Message::MountFdError(err) => write!(f, "MountFdError({})", err),
             Message::ExecFailed(s) => write!(f, "ExecFailed({})", s),
             Message::OtherError(s) => write!(f, "OtherError({})", s),
         }
@@ -42,4 +45,11 @@ pub struct MountMsg {
     pub cleared_flags: u64,
     pub is_bind: bool,
     pub idmap: Option<MountIdMap>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MountIdMap {
+    pub uid_mappings: Vec<LinuxIdMapping>,
+    pub gid_mappings: Vec<LinuxIdMapping>,
+    pub recursive: bool,
 }
