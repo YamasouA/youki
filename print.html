@@ -16,8 +16,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-2459343d.css">
-        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/general-0392ca55.css">
+        <link rel="stylesheet" href="css/chrome-fc474251.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ea13659e.js";
+            window.path_to_searchindex_js = "searchindex-972db254.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-0bc41377.js"></script>
+        <script src="toc-96345dbb.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -223,6 +223,8 @@ youki is named after the Japanese word ‘youki’, which means ‘a container�
 <p>I have fun implementing this. In fact, this may be the most important.</p>
 </li>
 </ul>
+<hr>
+<p>Copyright youki a Series of LF Projects, LLC. For website terms of use, trademark policy and other project policies please see <a href="https://lfprojects.org/policies/">lfprojects.org/policies/</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="user-documentation"><a class="header" href="#user-documentation">User Documentation</a></h1>
 <p>This section provides documentation of youki and the sub crates that the youki repo contains for the users. So if you are using youki as a low level container runtime, or using any of the crates in youki workspace as dependencies for your own project, this section might be helpful for you.</p>
@@ -299,7 +301,7 @@ If you installed it using rustup, the correct compiler version will be setup aut
 <p>Install the build dependencies and then run:</p>
 <pre><code class="language-console">just youki-dev # or youki-release
 </code></pre>
-<p>Install the build dependencies using your distribution’s package manger</p>
+<p>Install the build dependencies using your distribution’s package manager</p>
 <h4 id="debian-ubuntu-and-related-distributions-1"><a class="header" href="#debian-ubuntu-and-related-distributions-1">Debian, Ubuntu and related distributions</a></h4>
 <pre><code class="language-console">sudo apt-get install    \
       pkg-config        \
@@ -461,7 +463,7 @@ sudo ./youki list
 sudo ./youki delete tutorial_container
 </code></pre>
 <p>The example above shows how to run Youki in a ‘rootful’ way. To run it without root permissions, that is, in rootless mode, few changes are required.</p>
-<p>First, after exporting the rootfs from docker, while generating the config, you will need to pass the rootless flag. This will generate the config withe the options needed for rootless operation of the container.</p>
+<p>First, after exporting the rootfs from docker, while generating the config, you will need to pass the rootless flag. This will generate the config with the options needed for rootless operation of the container.</p>
 <pre><code class="language-console">../youki spec --rootless
 </code></pre>
 <p>After this, the steps are basically the same, except you do not need to use sudo while running youki.</p>
@@ -915,7 +917,7 @@ A Committer shouldn’t merge their own pull requests without approval by at lea
 <p>Youki currently uses <a href="https://www.crates.io/crates/anyhow">anyhow</a> library to deal with errors occurring during its execution. So wherever you use fallible actions, or functions that can return <code>Result</code>, make sure you attach enough information with the errors so that error logs can be useful for debugging later. For example, if you are reading a file, or parsing something and the operation does not succeed, you can add the path from which you attempted to read the file, or the string that you attempted to parse.</p>
 <p>Also for the error messages, we follow the convention all small-case letters and no period at the end, as discussed in <a href="https://github.com/youki-dev/youki/issues/313">this PR</a>. Whenever you write error messages, please follow this convention to keep them uniform.</p>
 <h4 id="logs"><a class="header" href="#logs">Logs</a></h4>
-<p>youki uses <a href="https://crates.io/crates/log">log</a> crate to log information while running. Whenever adding code to interact with system or kernel features or such, make sure to add debug logs so that if youki crashes, you can trace the errors and zero-in on the reasons using logs.</p>
+<p>youki uses the <a href="https://crates.io/crates/tracing">tracing</a> crate for logging at runtime. When adding code that interacts with system or kernel features, please add logs at an appropriate level. Use <code>tracing::debug!</code> for information useful during debugging, <code>tracing::trace!</code> for very verbose details, and <code>tracing::error!</code> when reporting an actual error. These logs help trace failures and narrow down their causes.</p>
 <h4 id="comments"><a class="header" href="#comments">Comments</a></h4>
 <p>Make sure that you comment copiously, and explain the peculiar behavior of your code so that others can understand why certain code is written the way it is. Also make sure to add doc comments and examples for <code>pub</code> items in the crates, so that users can find it from the docs generated by <code>cargo doc</code>.</p>
 <h4 id="scripts"><a class="header" href="#scripts">Scripts</a></h4>
@@ -1174,7 +1176,7 @@ when the executor can’t handle the workload.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="liboci-cli-1"><a class="header" href="#liboci-cli-1">liboci-cli</a></h1>
 <p>This crate was separated from original youki crate, and now contains a standalone implementation of structs needed for parsing commandline arguments for OCI-spec compliant runtime commandline interface. This is in turn used by youki to parse the command line arguments passed to it, but can be used in any other projects where there is need to parse OCI spec based commandline arguments.</p>
-<p>This primarily uses the <a href="https://docs.rs/clap/latest/clap/index.html">crate clap-v3</a> for parsing the actual commandline arguments given to the runtime.</p>
+<p>This primarily uses the <a href="https://docs.rs/clap/latest/clap/index.html">crate clap-v4</a> for parsing the actual commandline arguments given to the runtime.</p>
 <p>You can refer to <a href="https://github.com/opencontainers/runtime-tools/blob/master/docs/command-line-interface.md">OCI Commandline interface guide</a> to know more about the exact specification.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="libseccomp-1"><a class="header" href="#libseccomp-1">libseccomp</a></h1>
@@ -1454,11 +1456,11 @@ $ just test-runc-comp
 
         <script src="elasticlunr-ef4e11c1.min.js"></script>
         <script src="mark-09e88c2c.min.js"></script>
-        <script src="searcher-c2a407aa.js"></script>
+        <script src="searcher-09f2665d.js"></script>
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-a0b12cfe.js"></script>
+        <script src="book-c22b7243.js"></script>
 
         <!-- Custom JS scripts -->
 
