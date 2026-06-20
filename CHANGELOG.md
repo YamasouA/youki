@@ -1,5 +1,7 @@
 # Changelog
 
+## [v0.0.1](https://github.com/YamasouA/youki/commits/v0.0.1) - 2026-06-20
+
 ## [v0.6.0](https://github.com/youki-dev/youki/compare/v0.5.7...v0.6.0) - 2026-02-25
 ### 💪 Improvements
 - Add net device feature by @nayuta723 in https://github.com/youki-dev/youki/pull/3163
