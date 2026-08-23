@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>This Documentation - Youki User and Developer Documentation</title>
+        <title>Kubernetes - Youki User and Developer Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -174,35 +174,75 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="this-documentation"><a class="header" href="#this-documentation">This Documentation</a></h1>
-<p>This documentation is created using mdbook and aims to provide a concise reference for users and developers of youki. For more information on mdbook itself, you can check out the <a href="https://rust-lang.github.io/mdBook/">mdbook documentation</a>.</p>
-<p>Please make sure that you update this documentation along with newly added features and resources that you found helpful while developing, so that it will be helpful for newcomers.</p>
-<p>Currently this documentation is hosted at <a href="https://youki-dev.github.io/youki/">https://youki-dev.github.io/youki/</a>, using GitHub pages. GitHub CI actions are used to automatically check if any files are changed in /docs on each push / PR merge to main branch, and if there are any changes, the mdbook is build and deployed to gh-pages. We use <a href="https://github.com/peaceiris/actions-mdbook">https://github.com/peaceiris/actions-mdbook</a> to build and then <a href="https://github.com/peaceiris/actions-gh-pages">https://github.com/peaceiris/actions-gh-pages</a> GitHub action to deploy the mdbook.</p>
-<p>When testing locally you can manually test the changes by running <code>mdbook serve</code> in the docs directory (after installing mdbook), which will temporarily serve the mdbook at <code>localhost:3000</code> by default. You can check the mdbook documentation for more information.<br>(If you are running inside a Dev Container, use <code>mdbook serve -n 0.0.0.0</code> instead)</p>
-<p>If you want to test it using gh-pages on your own fork, you can use following steps in the docs directory.</p>
-<pre><code class="language-console">git worktree prune
-# Do this if you are running this command first time after booting,
-# As after shutdown /tmp files are removed
-git branch -D gh-pages &amp;&amp; git worktree add /tmp/book -b gh-pages
-mdbook build
-rm -rf /tmp/book/* # this won't delete the .git directory
-cp -rp book/* /tmp/book/
-cd /tmp/book
-git add -A
-git commit 'new book message'
-git push -f origin gh-pages
-cd -
+                        <h1 id="using-youki-as-a-kubernetes-runtime"><a class="header" href="#using-youki-as-a-kubernetes-runtime">Using youki as a Kubernetes runtime</a></h1>
+<p>youki implements the OCI runtime spec, so it can be plugged into any
+Kubernetes cluster. Once youki is installed on each node and the
+node’s container runtime is configured to know about it, individual
+Pods can opt in via <code>runtimeClassName: youki</code>.</p>
+<h2 id="youki-deploy-ready-to-use-installer-for-kind--containerd"><a class="header" href="#youki-deploy-ready-to-use-installer-for-kind--containerd">youki-deploy: ready-to-use installer for kind / containerd</a></h2>
+<p>The repository ships a small installer under
+<a href="https://github.com/youki-dev/youki/tree/main/tools/youki-deploy"><code>tools/youki-deploy/</code></a>
+which automates install the youki binary on every node, and register
+it as a containerd runtime. It is composed of:</p>
+<ul>
+<li>A Docker image that bundles the youki release binary and an
+<code>install-youki.sh</code> script.</li>
+<li>A Kubernetes DaemonSet manifest that runs that image as a privileged
+pod on every node, mounts the host’s <code>/usr/local/bin</code> and
+<code>/etc/containerd</code>, copies the binary into place, patches
+<code>/etc/containerd/config.toml</code>, and restarts containerd.</li>
+</ul>
+<p>It is currently exercised against <a href="https://kind.sigs.k8s.io/">kind</a>
+(Kubernetes-in-Docker) but the manifests are Kubernetes
+resources and should apply to any containerd-based cluster.</p>
+<h2 id="try-it-locally-on-kind"><a class="header" href="#try-it-locally-on-kind">Try it locally on kind</a></h2>
+<p>To stand up the cluster + DaemonSet:</p>
+<pre><code class="language-console">$ just kind-deploy
 </code></pre>
+<p>To tear it down:</p>
+<pre><code class="language-console">$ just clean-test-kind-deploy
+</code></pre>
+<p>See also
+<a href="../developer/e2e/kubernetes_test.html">Developer Documentation &gt; Kubernetes test</a>.</p>
+<h2 id="using-youki-for-your-own-pods"><a class="header" href="#using-youki-for-your-own-pods">Using youki for your own Pods</a></h2>
+<p>Once the DaemonSet is installed, just add <code>runtimeClassName: youki</code> to
+the pod spec:</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-youki
+spec:
+  runtimeClassName: youki
+  containers:
+    - name: nginx
+      image: nginx:1.27-alpine
+</code></pre>
+<p>Pods without <code>runtimeClassName</code> continue to use whatever the cluster’s
+default OCI runtime is (typically <code>runc</code>), so installing youki-deploy
+is non-disruptive for existing workloads.</p>
+<h2 id="caveats"><a class="header" href="#caveats">Caveats</a></h2>
+<ul>
+<li>The installer modifies <code>/usr/local/bin/youki</code> and
+<code>/etc/containerd/config.toml</code> on the host. It does not currently
+uninstall on DaemonSet deletion - removing youki and the containerd
+config patch must be done manually.</li>
+<li>The DaemonSet manifest references the installer image as
+<code>youki-installer:latest</code>, which is loaded into the local kind cluster
+by <code>just kind-deploy</code>. To deploy on a real cluster, build the image
+from <code>tools/youki-deploy/Dockerfile</code> and push it to a registry that
+your cluster nodes can pull from, then update the image field in
+<code>tools/youki-deploy/youki-deploy.yaml</code>.</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../developer/good_places_to_start.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../user/webassembly.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../developer/repo_structure.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../community/introduction.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -212,11 +252,11 @@ cd -
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../developer/good_places_to_start.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../user/webassembly.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../developer/repo_structure.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../community/introduction.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
