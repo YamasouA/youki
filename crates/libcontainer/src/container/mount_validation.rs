@@ -1,8 +1,6 @@
 use oci_spec::runtime::{Linux, LinuxIdMapping, LinuxNamespaceType, Mount as SpecMount};
 
 use crate::error::ErrInvalidSpec;
-use crate::syscall::Syscall;
-use crate::utils::rootless_required;
 
 fn has_non_empty_mappings(mappings: &[LinuxIdMapping]) -> bool {
     !mappings.is_empty()
@@ -60,10 +58,9 @@ fn validate_mount_mappings(mount: &SpecMount) -> Result<bool, ErrInvalidSpec> {
 pub(crate) fn validate_idmapped_mounts(
     mounts: &[SpecMount],
     linux: Option<&Linux>,
-    syscall: &dyn Syscall,
+    is_rootless: bool,
 ) -> Result<(), ErrInvalidSpec> {
     let can_use_container_userns = container_userns_has_mappings(linux);
-    let is_rootless = rootless_required(syscall).unwrap_or(false);
 
     for mount in mounts {
         if !mount_requests_idmap(mount) {
@@ -125,6 +122,7 @@ mod tests {
     use crate::error::ErrInvalidSpec;
     use crate::syscall::Syscall;
     use crate::syscall::syscall::create_syscall;
+    use crate::utils::rootless_required;
 
     fn create_root_syscall() -> Box<dyn Syscall> {
         let syscall = create_syscall();
@@ -157,7 +155,7 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], None, &*syscall);
+        let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
         assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
@@ -170,7 +168,7 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], None, &*syscall);
+        let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
         assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
@@ -192,7 +190,11 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], Some(&linux), &*syscall);
+        let res = validate_idmapped_mounts(
+            &[mount],
+            Some(&linux),
+            rootless_required(&*syscall).unwrap(),
+        );
         assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
@@ -213,7 +215,11 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], Some(&linux), &*syscall);
+        let res = validate_idmapped_mounts(
+            &[mount],
+            Some(&linux),
+            rootless_required(&*syscall).unwrap(),
+        );
         assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
@@ -235,7 +241,11 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], Some(&linux), &*syscall);
+        let res = validate_idmapped_mounts(
+            &[mount],
+            Some(&linux),
+            rootless_required(&*syscall).unwrap(),
+        );
         assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
@@ -250,7 +260,7 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], None, &*syscall);
+        let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
         assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
@@ -263,7 +273,7 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], None, &*syscall);
+        let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
         assert!(res.is_ok());
     }
 
@@ -278,7 +288,7 @@ mod tests {
         }))
         .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], None, &*syscall);
+        let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
         assert!(matches!(
             res,
             Err(ErrInvalidSpec::MountIdmapMissingMappings)
@@ -297,7 +307,7 @@ mod tests {
         }))
         .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], None, &*syscall);
+        let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
         assert!(matches!(
             res,
             Err(ErrInvalidSpec::MountIdmapMissingMappings)
@@ -313,7 +323,7 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], None, &*syscall);
+        let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
         assert!(matches!(
             res,
             Err(ErrInvalidSpec::MountIdmapMissingMappings)
@@ -327,7 +337,7 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], None, &*syscall);
+        let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
         assert!(matches!(
             res,
             Err(ErrInvalidSpec::MountIdmapMissingMappings)
@@ -341,7 +351,7 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], None, &*syscall);
+        let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
         assert!(matches!(
             res,
             Err(ErrInvalidSpec::MountIdmapMissingMappings)
@@ -364,7 +374,11 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], Some(&linux), &*syscall);
+        let res = validate_idmapped_mounts(
+            &[mount],
+            Some(&linux),
+            rootless_required(&*syscall).unwrap(),
+        );
         assert!(matches!(
             res,
             Err(ErrInvalidSpec::MountIdmapMissingMappings)
@@ -383,7 +397,11 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], Some(&linux), &*syscall);
+        let res = validate_idmapped_mounts(
+            &[mount],
+            Some(&linux),
+            rootless_required(&*syscall).unwrap(),
+        );
         assert!(matches!(
             res,
             Err(ErrInvalidSpec::MountIdmapMissingMappings)
@@ -402,7 +420,7 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], None, &*syscall);
+        let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
         assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapNonBind)));
     }
 
@@ -417,7 +435,7 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], None, &*syscall);
+        let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
         assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapNonBind)));
     }
 
@@ -431,7 +449,7 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mount], None, &*syscall);
+        let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
         assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
@@ -450,7 +468,11 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[mapped_mount, regular_mount], None, &*syscall);
+        let res = validate_idmapped_mounts(
+            &[mapped_mount, regular_mount],
+            None,
+            rootless_required(&*syscall).unwrap(),
+        );
         assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
@@ -472,7 +494,11 @@ mod tests {
             .build()
             .unwrap();
         let syscall = create_root_syscall();
-        let res = validate_idmapped_mounts(&[valid_mount, invalid_mount], None, &*syscall);
+        let res = validate_idmapped_mounts(
+            &[valid_mount, invalid_mount],
+            None,
+            rootless_required(&*syscall).unwrap(),
+        );
         assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapUnsupported)));
     }
 
@@ -488,7 +514,7 @@ mod tests {
         syscall
             .set_id(Uid::from_raw(1000), Gid::from_raw(1000))
             .unwrap();
-        let res = validate_idmapped_mounts(&[mount], None, &*syscall);
+        let res = validate_idmapped_mounts(&[mount], None, rootless_required(&*syscall).unwrap());
         assert!(matches!(res, Err(ErrInvalidSpec::MountIdmapRootless)));
     }
 }

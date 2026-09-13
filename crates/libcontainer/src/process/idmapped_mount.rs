@@ -238,7 +238,7 @@ fn create_userns_fd(
                 let mut buf = [0u8; 1];
                 // Exiting early would take /proc/<pid>/{uid,gid}_map with it
                 // before the parent has written them.
-                while let Err(Errno::EINTR) = read(release_read.as_raw_fd(), &mut buf) {}
+                while let Err(Errno::EINTR) = read(&release_read, &mut buf) {}
                 unsafe { libc::_exit(0) }
             }
             unsafe { libc::_exit(1) }
@@ -248,7 +248,7 @@ fn create_userns_fd(
             drop(release_read);
             let mut buf = [0u8; 1];
             let ready = loop {
-                match read(ready_read.as_raw_fd(), &mut buf) {
+                match read(&ready_read, &mut buf) {
                     Err(Errno::EINTR) => continue,
                     other => break other,
                 }
