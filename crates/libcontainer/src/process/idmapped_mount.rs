@@ -449,6 +449,32 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    fn create_idmapped_mount_fd_uses_mount_level_mappings() -> Result<()> {
+        let (uid_mapping, gid_mapping) = own_id_mappings();
+        let syscall = create_syscall();
+        let msg = MountMsg {
+            source: PathBuf::from("/src"),
+            idmap: Some(MountIdMap {
+                userns_source: MountIdMapUsernsSource::Mappings {
+                    uid_mappings: vec![uid_mapping],
+                    gid_mappings: vec![gid_mapping],
+                },
+                apply_idmap_recursively: false,
+            }),
+            clone_mount_tree_recursively: false,
+        };
+
+        let _fd = create_idmapped_mount_fd(syscall.as_ref(), &msg, Pid::this())?;
+
+        let setattr_args = mock_syscall(syscall.as_ref()).get_mount_setattr_args();
+        assert_eq!(setattr_args.len(), 1);
+        assert_eq!(setattr_args[0].attr_set, linux::MOUNT_ATTR_IDMAP);
+        assert_ne!(setattr_args[0].userns_fd, 0);
+        Ok(())
+    }
+
+    #[test]
     fn create_idmapped_mount_fd_reports_missing_kernel_support() {
         let syscall = create_syscall();
         mock_syscall(syscall.as_ref())
